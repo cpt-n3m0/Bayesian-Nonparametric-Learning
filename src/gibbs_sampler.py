@@ -5,8 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 import math
+import imageio
+from sklearn.cluster import KMeans
 import sys
 
+np.set_printoptions(precision=2)
 
 VERBOSE = False
 
@@ -15,7 +18,12 @@ if "-v" in sys.argv :
 
 
 #generate synthetic dataset
-x = np.concatenate([np.random.normal(loc=-60, scale=4, size=50), np.random.normal(loc=30, scale=2, size=50), np.random.normal(loc=50, scale=2, size=50)]).ravel()
+K = 4
+x1 = np.random.normal(loc=-50, scale=4, size=100)
+x2 = np.random.normal(loc=-20, scale=2, size=100)
+x3 = np.random.normal(loc=0, scale=1, size=100)
+x4 = np.random.normal(loc=50, scale=2, size=100)
+x = np.concatenate([x1, x2, x3, x4]).ravel()
 np.random.shuffle(x)
 
 if VERBOSE:
@@ -26,20 +34,32 @@ if VERBOSE:
 
 # Sampler
 #Hyper-parameters
-K = 3
 alpha = [2] * K
-m0 = 0
-V0 = 1
+m0 = np.mean(x)
+V0 = 1000
 sh0 = 1
 sc0 = 2
 
-pi = np.random.dirichlet(alpha, size=1)[0]
-mus = [np.random.normal(loc=m0, scale=V0, size=1)[0] for k in range(K)]
-mus = [-30, 20, 40]
-#Vs = [2, 2, 2]
-Vs = [np.random.gamma(shape=sh0, scale=1/sc0, size=1)[0] for k in range(K)]
-#pi=[0.5, 0.5]
+def init_parameters(x, random=False):
+    if random:
+        pi = np.random.dirichlet(alpha, size=1)[0]
+        mus = [np.random.normal(loc=m0, scale=V0, size=1)[0] for k in range(K)]
+        Vs = [np.random.gamma(shape=sh0, scale=1/sc0, size=1)[0] for k in range(K)]
+    else:
+        pi = [1/K] * K
+        kmeans = KMeans(n_clusters=K)
+        kmeans.fit(x.reshape((-1,1)))
+        mus = kmeans.cluster_centers_
+        Vs = [np.random.gamma(shape=sh0, scale=1/sc0, size=1)[0] for k in range(K)]
 
+
+    print("INITIAL PARAMETERS")
+    print("pi: {}".format(str(pi)))
+    print("mus: {}".format(str(mus)))
+    print("Vs: {}".format(str(Vs)))
+    return pi, mus, Vs
+
+ITER = 0
 
 def sample_z(x, mus, Vs, pi):
     z = []
@@ -52,10 +72,7 @@ def sample_z(x, mus, Vs, pi):
         z.append(np.argwhere(np.random.multinomial(1, p_k) == 1).ravel()[0])
     z = np.array(z)
 
-    plt.hist(x[np.argwhere(z == 0).ravel()], label="0")
-    plt.hist(x[np.argwhere(z == 1).ravel()], label="1")
-    plt.hist(x[np.argwhere(z == 2).ravel()], label="2")
-    plt.show()
+    #    plt.show()
     return z
 
 def sample_pi(z):
@@ -78,6 +95,9 @@ def sample_mu(V_k, k, z, x):
     empirical_mean = np.sum(x_k)/N_k
     new_V= 1/(1/V0 + N_k / V_k)
     new_m = new_V * (empirical_mean * N_k/V_k + m0/V0)
+    print("new_V: " + str(new_V) )
+    print("new_m: " + str(new_m) )
+    print("empirical mean: " + str(empirical_mean))
     return np.random.normal(loc=new_m, scale=math.sqrt(new_V))
 
 def sample_v(m_k, k , z, x):
@@ -85,46 +105,65 @@ def sample_v(m_k, k , z, x):
     print("sampling V ...")
     x_k = x[np.argwhere(z==k).ravel()] 
     N_k = x_k.shape[0]
-    #empirical_mean = np.sum(x_k)/N_k
-    #sample_var = np.sum(np.array([(x_i - m_k) ** 2 for x_i in x_k])) / N_k
-
-
     new_shape = sh0 + N_k/2
     new_rate = 1/sc0 + 1/2 * np.sum(np.array([(x_i - m_k) ** 2 for x_i in x_k]))
-    #new_rate = 1/sc0 + 1/2 * (N_k * sample_var + N_k * (empirical_mean - m_k) ** 2)
-    return 1/np.random.gamma(shape=new_shape, scale=1/new_rate, size=1)[0]
+    print("new_shape: " + str(new_shape))
+    print("new_rate: " + str(new_rate))
+    lmbda = np.random.gamma(shape=new_shape, scale=1/new_rate, size=1)[0] 
+    print("sampled_precision: " + str(lmbda))
+    return 1/lmbda
 
-def gibbs_sampler(x, pi, mus, Vs, niter=1000):
+images = []
+def show(itern, x, z, mus, vs, pis):
+    for k in range(K):
+        plt.hist(x[np.argwhere(z == k).ravel()], label="K={}".format(k))
+    std_devs = np.array([math.sqrt(i) for i in vs])
+    plt.title("iter = {}, means = {}, std_devs = {}, pis = {}".format(str(itern), mus, std_devs, pis), fontsize=8)
+    plt.savefig("iter_" + str(itern))
+    plt.clf()
+    images.append(imageio.imread("iter_"+  str(itern) + ".png"))
+
+
+def gibbs_sampler(x, niter=100):
     
-    sampled_mus = mus
-    sampled_Vs = Vs 
-    sampled_pis = pi
+    global ITER
+    pi, mus, Vs = init_parameters(x, random=True)
+    sampled_mus = np.array(mus)
+    sampled_Vs = np.array(Vs) 
+    sampled_pis = np.array(pi)
     sampled_z = []
-    k = 0 
     for n in range(niter):
-        if k == K: k = 0
-        print("\nITER " + str(n) + ", K = " + str(k ))
+        ITER = n
+        print("\nITER " + str(n) )
         print("mus : " + str(sampled_mus))
         print("std_devs : " + str([math.sqrt(i) for i in sampled_Vs]))
         print("pis : " + str(sampled_pis))
-        z = sample_z(x, sampled_mus, sampled_Vs, sampled_pis)
+        if n == 0:
+            z = np.array([np.argwhere(np.random.multinomial(1, [1/K] * K) == 1).ravel()[0] for x_i in x])
+        else:
+            z = sample_z(x, sampled_mus, sampled_Vs, sampled_pis)
 
-        ipi = []
+        print(z)
+
 
         ipi = sample_pi(z)
-        #for k in range(K):
-        imu = sample_mu(sampled_Vs[k], k, z, x )
-        iV = sample_v(imu,k, z, x )
+        for k in range(K):
+            sampled_mus[k] = sample_mu(sampled_Vs[k], k, z, x )
+            sampled_Vs[k] = sample_v(sampled_mus[k],k, z, x )
+
 
         sampled_z = z
-        sampled_mus[k] = imu
-        sampled_Vs[k] = iV
         sampled_pis = ipi
-        k += 1
 
+        show(n, x, z, sampled_mus, sampled_Vs, sampled_pis)
+        
+    print("final samples")
     print(sampled_mus)
-    print(sampled_Vs)
+    print([math.sqrt(i) for i in sampled_Vs])
     print(sampled_pis)
+    
 
 
-gibbs_sampler(x, pi, mus, Vs)
+
+gibbs_sampler(x)
+imageio.mimsave("convergence_anim.gif", images, duration=0.1)
