@@ -12,12 +12,11 @@ import sys
 np.set_printoptions(precision=2)
 
 
-
 def init(x, random=True):
     if random:
         pi = np.random.dirichlet(alpha, size=1)[0]
         mus = [np.random.normal(loc=m0, scale=V0, size=1)[0] for k in range(K)]
-        Vs = [np.random.gamma(shape=sh0, scale=1/sc0, size=1)[0] for k in range(K)]
+        Vs = [1/np.random.gamma(shape=sh0, scale=1/sc0, size=1)[0] for k in range(K)]
     else:
         pi = [1/K] * K
         kmeans = KMeans(n_clusters=K)
@@ -37,44 +36,23 @@ def init(x, random=True):
 
 
 def sample_z(x, mus, Vs, pi):
+    std_devs = list(map(math.sqrt, Vs)) 
     z = []
-    for x_i in x :
-        p_k = np.zeros((K,), dtype="float64")
-        for k in range(K):
-            p_k[k] = pi[k] * norm.pdf(x_i, mus[k], math.sqrt(Vs[k]))
-        p_k = p_k/np.sum(p_k, dtype="float64")
-        try:
-            z.append(np.argwhere(np.random.multinomial(1, p_k) == 1).ravel()[0])
-        except ValueError:
-            print(p_k)
-            print(x_i)
-            print(mus)
-            print(Vs)
+    p_k = np.zeros((x.shape[0], K), dtype="float64")
+    
+    for k in range(K):
+        p_k[:, k] = pi[k] * norm.pdf(x, mus[k], std_devs[k])
 
+    p_k = p_k/np.sum(p_k, axis = 1, dtype="float64")[:, np.newaxis]
+
+    try:
+        z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
+    except ValueError:
+        print(mus)
+        print(Vs)
+        sys.exit()
     return np.array(z)
-#def old_sample_z(x, mus, Vs, pi):
-#    z = []
-#    for x_i in x :
-#        p_k = np.zeros((K,), dtype="float64")
-#        log_p_k = np.zeros((K,), dtype="float64")
-#        for k in range(K):
-#            p_k[k] = pi[k] * norm.pdf(x_i, mus[k], math.sqrt(Vs[k]))
-#            
-#            if p_k[k] < min_val:
-#                print("done")
-#                print(p_k[k])
-#                p_k[k] = min_val
-#
-#            log_p_k[k] = math.log(p_k[k])
-#
-#        A = max(log_p_k) 
-#        log_marginal = A + math.log(sum([math.exp(e - A) for e in log_p_k]))
-#        normalized_log_p_k = log_p_k - log_marginal
-#        p_k = np.array(list(map(math.exp, normalized_log_p_k)))
-#        z.append(np.argwhere(np.random.multinomial(1, p_k) == 1).ravel()[0])
-#
-#    z = np.array(z)
-#    return z
+    return z
  
 def sample_pi(z):
     z_counts=np.zeros(K)
@@ -88,34 +66,28 @@ def sample_pi(z):
     return np.random.dirichlet(new_alpha)
 
 
-def sample_mu(V_k, k, z, x):
-    global V0, m0
-    x_k = x[np.argwhere(z==k).ravel()]
-    N_k = x_k.shape[0]
-    empirical_mean = np.sum(x_k)/N_k
-    new_V= 1/(1/V0 + N_k / V_k)
-    new_m = new_V * (empirical_mean * N_k/V_k + m0/V0)
-    if DEBUG:
-        print("sampling mu ...")
-        print("num z_{} : ".format(k) + str(N_k))
-        print("new_V: " + str(new_V) )
-        print("new_m: " + str(new_m) )
-        print("empirical mean: " + str(empirical_mean))
-    return np.random.normal(loc=new_m, scale=math.sqrt(new_V))
+def sample_mu(V_k, ks_mean, N):
+        
+    new_V= 1/(1/V0 + N/ V_k)
+    new_m = new_V * (ks_mean * N/V_k + m0/V0)
 
-def sample_v(m_k, k , z, x):
-    global sh0, sc0
-    x_k = x[np.argwhere(z==k).ravel()] 
-    N_k = x_k.shape[0]
-    new_shape = sh0 + N_k/2
-    new_rate = 1/sc0 + 1/2 * np.sum(np.array([(x_i - m_k) ** 2 for x_i in x_k]))
-    lmbda = np.random.gamma(shape=new_shape, scale=1/new_rate, size=1)[0] 
+    return [np.random.normal(loc=new_m[k], scale=math.sqrt(new_V[k])) for k in range(K)]
+
+
+def sample_v(m_k, ks_mean, ks_var, N):
+
+    new_shapes = sh0 + N/2
+    new_rates = 1/sc0 + N/2 * (ks_var + (ks_mean- m_k)**2)
+
+    lmbda = [np.random.gamma(shape=new_shapes[k], scale=1/new_rates[k], size=1)[0] for k in range(K)]
     if DEBUG:
         print("sampling V ...")
         print("new_shape: " + str(new_shape))
         print("new_rate: " + str(new_rate))
         print("sampled_precision: " + str(lmbda))
-    return 1/lmbda
+
+
+    return 1/np.array(lmbda)
 
 images = []
 def show(itern, x, z, mus, vs, pis):
@@ -134,13 +106,6 @@ def log_likelihood(x, mus, Vs, z):
         k = z[i]
         likelihood += math.log(norm.pdf(x[i], mus[k], Vs[k]))
     return likelihood
-
-#def full_log_likelihood(x, mus, Vs, z):
-#    likelihood = 0.0
-#    pi = sample_pi(z)
-#    for i in range(len(x)):
-#        likelihood += math.log(sum([pi[k] * norm.pdf(x[i], mus[k], Vs[k]) for k in range(K)]))
-#    return likelihood
 
 iter_likelihoods = []
 ilmeans = []
@@ -161,7 +126,7 @@ def gibbs_sampler(x, niter=100):
     sampled_pis = [pi]
     sampled_z = z
     for n in range(niter):
-        print("ITER {}/{}".format(str(n), str(niter)) , end= "\n"  if DEBUG else "\r", flush=not DEBUG )
+        print("ITER {}/{}".format(str(n), str(niter)) , end= "\n" if  DEBUG else "\r", flush=not DEBUG )
         
         if DEBUG: 
             print("mus : " + str(sampled_mus[-1]))
@@ -176,15 +141,26 @@ def gibbs_sampler(x, niter=100):
 
 
         ipi  = sample_pi(z)
+        
         imus = []
         iVs  = []
+        
+        ks_var = np.zeros((K,))
+        ks_mean = np.zeros((K,))
+        N = np.zeros((K,))
         for k in range(K):
-            imus.append(sample_mu(sampled_Vs[-1][k], k, z, x ))
-            iVs.append(sample_v(imus[-1] ,k, z, x ))
+            ks = x[np.argwhere(z==k).ravel()]
+            N[k] = ks.shape[0]
+            ks_var[k] = np.var(ks)
+            ks_mean[k] = np.mean(ks)
+            if math.isnan(ks_mean[k]):
+                ks_mean[k] = 0
+            if math.isnan(ks_var[k]):
+                ks_var[k] = 0
 
+        sampled_mus.append(sample_mu(sampled_Vs[-1], ks_mean, N ))
+        sampled_Vs.append(sample_v(sampled_mus[-1], ks_mean, ks_var, N ))
         sampled_pis.append(ipi)
-        sampled_mus.append(imus)
-        sampled_Vs.append(iVs)
         sampled_z = z
         
         if PLOT:
@@ -197,12 +173,12 @@ def gibbs_sampler(x, niter=100):
 
     print("")
     print("True parameters")
-    print("Mus : " + str(original_mus))
-    print("std devs : " + str(original_Vs))
+    print("Mus : " + str(sorted(np.array(original_mus))))
+    print("std devs : " + str(np.array(original_Vs)))
     print("final samples")
-    print("final Mus : " + str(np.mean(sampled_mus[-M:], axis=0)))
-    print("final std devs : " + str(np.array(list(map(math.sqrt, np.mean(sampled_Vs[-M:], axis=0))))))
-    print("final pis: " + str(np.mean(sampled_pis, axis=0)))
+    print("final Mus : " + str(sorted(np.array(sampled_mus[-1]))))
+    print("final std devs : " + str(np.array(list(map(math.sqrt, sampled_Vs[-1])))))
+    print("final pis: " + str(sampled_pis[-1]))
     
 
 
@@ -264,7 +240,7 @@ alpha = [2] * K
 m0 = np.mean(x)
 V0 = 100000
 sh0 = 1
-sc0 = 1
+sc0 = 0.5
 
 
 
@@ -274,4 +250,3 @@ if PLOT :
     imageio.mimsave("convergence_anim.gif", images, duration=0.1)
     plt.plot(list(range(len(ilmeans))), ilmeans)
     plt.savefig("figures/avg_log_likelihood_{}".format(str(M)))
-
