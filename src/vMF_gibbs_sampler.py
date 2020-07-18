@@ -2,29 +2,23 @@
 
 
 import numpy as np
+from numpy.linalg import inv, norm
 import matplotlib.pyplot as plt
-from scipy.stats import norm
+from scipy.stats import wishart, multivariate_normal
 import math
 import imageio
 from sklearn.cluster import KMeans
 import sys
+import directionalstats
 
-np.set_printoptions(precision=2)
+#np.set_printoptions(precision=4)
 
 
 def init(x, random=True):
-    if random:
-        pi = np.random.dirichlet(alpha, size=1)[0]
-        mus = [np.random.normal(loc=m0, scale=V0, size=1)[0] for k in range(K)]
-        Vs = [1/np.random.gamma(shape=sh0, scale=1/sc0, size=1)[0] for k in range(K)]
-    else:
-        pi = [1/K] * K
-        kmeans = KMeans(n_clusters=K)
-        kmeans.fit(x.reshape((-1,1)))
-        mus = kmeans.cluster_centers_
-        Vs = [np.random.gamma(shape=sh0, scale=1/sc0, size=1)[0] for k in range(K)]
+    pi = np.random.dirichlet(alpha, size=1)[0]
+    mus = [np.random.multivariate_normal(m0, cov0, size=1) for k in range(K)]
+    covs = [np.linalg.inv(wishart.rvs(df=P, scale=(np.identity(P)))) for k in range(K)]
 
-    
     z = np.array([np.argwhere(np.random.multinomial(1, [1/K] * K) == 1).ravel()[0] for x_i in x]) #initialize z randomly
 
     if DEBUG:
@@ -32,27 +26,20 @@ def init(x, random=True):
         print("pi: {}".format(str(pi)))
         print("mus: {}".format(str(mus)))
         print("Vs: {}".format(str(Vs)))
-    return pi, mus, Vs, z
+    return pi, mus, covs, z
 
 
-def sample_z(x, mus, Vs, pi):
-    std_devs = list(map(math.sqrt, Vs)) 
+def sample_z(x, mus, sigmas, pi):
     z = []
     p_k = np.zeros((x.shape[0], K), dtype="float64")
     
     for k in range(K):
-        p_k[:, k] = pi[k] * norm.pdf(x, mus[k], std_devs[k])
+        p_k[:, k] = pi[k] * multivariate_normal.pdf(x, mus[k], sigmas[k])
 
     p_k = p_k/np.sum(p_k, axis = 1, dtype="float64")[:, np.newaxis]
 
-    try:
-        z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
-    except ValueError:
-        print(mus)
-        print(Vs)
-        sys.exit()
+    z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
     return np.array(z)
-    return z
  
 def sample_pi(z):
     z_counts=np.zeros(K)
@@ -66,28 +53,27 @@ def sample_pi(z):
     return np.random.dirichlet(new_alpha)
 
 
-def sample_mu(V_k, ks_mean, N):
+def sample_mu(kappa_k, z, x, N):
+    
+    samples = []
+    for k in range(K):
+        x_k = x[np.argwhere(z == k).ravel()]
+        Vn = kappa0 * mu0 + kappa_k[k] * np.sum(x_k)
+
+        posterior_mean = Vn / norm(Vn) 
+        posterior_kappa = norm(Vn)
+        samples.append(rvMF(1, posterior_mean, posterior_kappa)[0])
+    return samples
+
+
+
+
+def sample_kappa(means,x, z):
+    samples = []
+    for k in range(K):
         
-    new_V= 1/(1/V0 + N/ V_k)
-    new_m = new_V * (ks_mean * N/V_k + m0/V0)
-
-    return [np.random.normal(loc=new_m[k], scale=math.sqrt(new_V[k])) for k in range(K)]
-
-
-def sample_v(m_k, ks_mean, ks_var, N):
-
-    new_shapes = sh0 + N/2
-    new_rates = 1/sc0 + N/2 * (ks_var + (ks_mean- m_k)**2)
-
-    lmbda = [np.random.gamma(shape=new_shapes[k], scale=1/new_rates[k], size=1)[0] for k in range(K)]
-    if DEBUG:
-        print("sampling V ...")
-        print("new_shape: " + str(new_shape))
-        print("new_rate: " + str(new_rate))
-        print("sampled_precision: " + str(lmbda))
-
-
-    return 1/np.array(lmbda)
+        samples.append()
+    return samples
 
 images = []
 def show(itern, x, z, mus, vs, pis):
@@ -120,9 +106,9 @@ def check_stop(x, sampled_mus, sampled_Vs, z):
 def gibbs_sampler(x, niter=100):
     
     global ITER
-    pi, mus, Vs, z = init(x)
+    pi, mus, sigmas, z = init(x)
     sampled_mus = [mus]
-    sampled_Vs = [Vs]
+    sampled_sigmas = [sigmas]
     sampled_pis = [pi]
     sampled_z = z
     for n in range(niter):
@@ -130,37 +116,27 @@ def gibbs_sampler(x, niter=100):
         
         if DEBUG: 
             print("mus : " + str(sampled_mus[-1]))
-            print("std_devs : " + str([math.sqrt(i) for i in sampled_Vs[-1]]))
+            print("std_devs : " + str([math.sqrt(i) for i in sampled_simgas[-1]]))
             print("pis : " + str(sampled_pis[-1]))
 
         #-------------------------Sampling start-------------------------------
         if n > 0:
-            z = sample_z(x, sampled_mus[-1], sampled_Vs[-1], sampled_pis[-1])
+            z = sample_z(x, sampled_mus[-1], sampled_sigmas[-1], sampled_pis[-1])
 
-        if DEBUG: print(z)
-
-
-        ipi  = sample_pi(z)
+        sampled_pis.append(sample_pi(z))
         
-        imus = []
-        iVs  = []
-        
-        ks_var = np.zeros((K,))
-        ks_mean = np.zeros((K,))
+        ks_mean = np.zeros((K, P)) 
         N = np.zeros((K,))
         for k in range(K):
             ks = x[np.argwhere(z==k).ravel()]
             N[k] = ks.shape[0]
-            ks_var[k] = np.var(ks)
-            ks_mean[k] = np.mean(ks)
-            if math.isnan(ks_mean[k]):
-                ks_mean[k] = 0
-            if math.isnan(ks_var[k]):
-                ks_var[k] = 0
+            if N[k] == 0:
+                ks_mean[k] = [0] * P
+                continue
+            ks_mean[k] = np.mean(ks, axis=0)
 
-        sampled_mus.append(sample_mu(sampled_Vs[-1], ks_mean, N ))
-        sampled_Vs.append(sample_v(sampled_mus[-1], ks_mean, ks_var, N ))
-        sampled_pis.append(ipi)
+        sampled_mus.append(sample_mu(sampled_sigmas[-1], ks_mean, N ))
+        sampled_sigmas.append(sample_v(sampled_mus[-1],x, z ))
         sampled_z = z
         
         if PLOT:
@@ -173,11 +149,11 @@ def gibbs_sampler(x, niter=100):
 
     print("")
     print("True parameters")
-    print("Mus : " + str(sorted(np.array(original_mus))))
-    print("std devs : " + str(np.array(original_Vs)))
+    print("Mus : " + str(np.array(original_mus)))
+    print("std devs : " + str(np.array(original_covs)))
     print("final samples")
-    print("final Mus : " + str(sorted(np.array(sampled_mus[-1]))))
-    print("final std devs : " + str(np.array(list(map(math.sqrt, sampled_Vs[-1])))))
+    print("final Mus : " + str(np.array(sampled_mus[-1])))
+    print("final std devs : " + str(sampled_sigmas[-1]))
     print("final pis: " + str(sampled_pis[-1]))
     
 
@@ -191,6 +167,11 @@ def gibbs_sampler(x, niter=100):
 
 
 #Flags
+try:
+    P = int(sys.argv[1]) 
+except:
+    print("Usage multivariate_gibbs_sampler.py Dimensions [...]")
+    sys.exit(0)
 
 MARGINALS = False
 
@@ -210,20 +191,27 @@ if "-getmarginals" in sys.argv:
 
 
 if "-s" in sys.argv:
+
     K = int(sys.argv[sys.argv.index("-s") + 1]) 
     N = int(sys.argv[sys.argv.index("-s") + 2]) 
     #generate synthetic dataset
     components = []
     original_mus = []
-    original_Vs = []
+    original_covs = []
     for i in range(K):
-        loc = np.random.random() * 100
-        scale = np.random.random() * 5
-        c = np.random.normal(loc=loc, scale=scale, size=N)
-        original_mus.append(loc)
-        original_Vs.append(scale)
-        components.append(c)
+        mean = [np.random.random() * 50 for j in range(P)]
+        cov = np.linalg.inv(wishart.rvs(df=P, scale=(np.identity(P))))
+        components.append(np.random.multivariate_normal(mean=mean, cov=cov, size=N))     
+        original_mus.append(mean)
+        original_covs.append(np.array(cov))
+
     x = np.concatenate(components)
+    if PLOT:
+        for c in components:
+            plt.scatter(x[:, 0], x[:, 1], s=np.pi * 3)
+        plt.show()
+        sys.exit(-1)
+    
 
 elif "-f" in sys.argv:
     # read data from file
@@ -237,11 +225,10 @@ np.random.shuffle(x)
 #Hyper-parameters
 M = 20 # number of samples considered for likelihood stop calculation
 alpha = [2] * K
-m0 = np.mean(x)
-V0 = 100000
-sh0 = 0.0001
-sc0 = 0.0001
-
+m0 = directional_sample_mean(x)#np.mean(x, axis=0)
+kappa0 = directional_sample_concentration(x)
+S0 = np.identity(P)
+v0 = P
 
 
 
