@@ -43,15 +43,12 @@ def rW(n, kappa, m):
     return y
 
 
-def rvMF(n, theta):
-    dim = len(theta)
-    kappa = np.linalg.norm(theta)
-    mu = theta / kappa
+def rvMF(n, mu, kappa):
+    dim = len(mu)
     result = []
     for sample in range(0,n):
         w = rW(n, kappa, dim)
         #v = sample_tangent_unit(mu)
-
         v = np.random.randn(dim)
         v = v / np.linalg.norm(v) 
         result.append(np.sqrt(1-w**2)*v + w*mu)
@@ -59,33 +56,48 @@ def rvMF(n, theta):
     return result
 ## end of copied code
 
-def vMFpdf(x, mu, kappa, p=1):
-    C_p = lambda k: k ** (p/2 - 1)/( (2 * math.PI)**(p/2) * iv(p/2 - 1, k))
+def vMFpdf(x, mu, kappa):
+    p = len(mu)
+    C_p = lambda k: (k ** (p/2 - 1))/( ((2 * math.PI)**(p/2)) * iv(p/2 - 1, k))
 
-    d = C_p(kappa) * np.exp(kappa * mu * x)
+    d = C_p(kappa) * np.exp(kappa * np.dot(mu , x.T))
 
 def kappa_conditional_pdf(x, mu, mu0, a, b):
     p = mu.shape[0]
-    return (x ** (p/2 - 1)/iv(p/2 - 1, x)) * np.exp(b * x * np.dot(mu , mu0.T))
+    return (x ** (p/2 - 1)/iv(p/2 - 1, x)) ** a  * np.exp(b * x * np.dot(mu , mu0.T))
 
-def fix_wbounds(slb, srb, p, y, increment = 0.5):
+def wstep_out(slb, srb, p, y, increment = 0.5):
     # fix right bound
-    while  y < p(srb) :
+    while not math.isinf(p(srb)) and  y < p(srb) :
         srb += increment
-    while y < p(slb):
-        slb -= increment
+    
+    while math.isinf(p(srb)):
+        srb -= increment
+    if slb < 0: 
+        slb=0
+    else:
+        while not math.isinf(p(slb)) and y < p(slb):
+            print(slb)
+            print(p(slb))
+            slb -= increment
+            if slb < 0:
+                slb = 0
+                break
+
+    while math.isinf(p(slb)):
+        srb += increment
+
     return slb, srb
-def slice_sampler(p, w, niter=5000):
+def slice_sampler(p, w, niter=500, step_out=True):
     default_w = w
     samples = np.zeros((niter,))
     x = 1
     for n in range(niter):
         y = np.random.random() * p(x)
-        print("X = " + str(x))
-        print(p(x))
         offset = np.random.random() * w
-        w_prime = np.random.random() * w
-        w_lbound , w_rbound = fix_wbounds(x - offset, x + (w - offset), p, y )
+        w_lbound , w_rbound = x - offset, x + (w - offset)
+        if step_out:
+            w_lbound, w_rbound = wstep_out(w_lbound, w_rbound, p , y) 
         proposal = w_lbound + np.random.random() * (w_rbound - w_lbound)
         while y > p(proposal):
             proposal = w_lbound + np.random.random() * (w_rbound - w_lbound)
@@ -95,22 +107,25 @@ def slice_sampler(p, w, niter=5000):
         w = default_w
 
 
-    print(np.mean(samples))
-    print(math.sqrt(np.var(samples)))
     return samples
 
 
 
 if __name__ == "__main__" :
-    mu0 = np.array([0.15384193,0.14248371,0.9777684 ])
-    mu = np.array([0.84606022, 0.42302811, 0.32439069] )
+    #mu0 = np.array([0.15384193,0.14248371,0.9777684 ])
+    #mu = np.array([0.84606022, 0.42302811, 0.32439069] )
 
- #   m = np.random.multivariate_normal([1, 1, 3], [[5, 0, 0], [0, 5, 0], [0, 0,  5]], size=2)
- #   mu = m[0]/np.linalg.norm(m[0])
- #   print(mu)
- #   mu0 = m[1]/np.linalg.norm(m[1])
- #   print(mu0)
-    p = lambda x: kappa_conditional_pdf(x, mu , mu0, 1, 2)
-    plt.hist(slice_sampler(p, 1, niter=10000))
-    plt.show()
+    m = np.random.multivariate_normal([1, 3, 5, 1], [[7, 0, 0, 0], [0, 7, 0, 0], [0, 0, 7, 0], [0, 0, 0, 7] ], size=2)
+    mu = m[0]/np.linalg.norm(m[0])
+    mu0 = m[1]/np.linalg.norm(m[1])
+    p = lambda x: kappa_conditional_pdf(x, mu , mu, 1, 0.9)
+    x = np.arange(0, 100, 10e-3)
+    y = [p(e) for e in x]
+    #plt.plot(x,y )
+    #plt.show()
+    s = slice_sampler(p, 5)
+    
+    
+    #plt.show()
+    print(rvMF(5, mu, s[-1]))
 
