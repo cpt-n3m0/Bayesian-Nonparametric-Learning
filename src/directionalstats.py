@@ -9,7 +9,7 @@ import math
 import matplotlib.pyplot as plt
 import sys
 
-# vMF sampling function code taken from https://stats.stackexchange.com/questions/156729/sampling-from-von-mises-fisher-distribution-in-python 
+# vMF sampling function code taken from https://stats.stackexchange.com/questions/156729/sampling-from-von-mises-fisher-distribution-in-python (corrections and modifications were performed)
 
 def sample_tangent_unit(mu):
     mat = np.matrix(mu)
@@ -24,36 +24,33 @@ def sample_tangent_unit(mu):
 
 def rW(n, kappa, m):
     dim = m-1
-    b = dim / (np.sqrt(4*kappa*kappa + dim*dim) + 2*kappa)
+    b =(np.sqrt(4 * kappa**2 + dim**2) - 2 * kappa) /  dim  
     x = (1-b) / (1+b)
-    c = kappa*x + dim*np.log(1-x*x)
+    c = kappa*x + dim*np.log(1-x**2)
 
-    y = []
-    for i in range(0,n):
-        done = False
-        while not done:
-            z = sc.stats.beta.rvs(dim/2,dim/2)
-            w = (1 - (1+b)*z) / (1 - (1-b)*z)
-            u = sc.stats.uniform.rvs()
-            if kappa*w + dim*np.log(1-x*w) - c >= np.log(u):
-                done = True
-        y.append(w)
+    done = False
+    while not done:
+        z = sc.stats.beta.rvs(dim/2,dim/2)
+        w = (1 - (1+b)*z) / (1 - (1-b)*z)
+        u = sc.stats.uniform.rvs()
+        if kappa*w + dim*np.log(1-x*w) - c >= np.log(u):
+            done = True
 
-    print(y)
-    return y
+    
+    return w
 
 
 def rvMF(n, mu, kappa):
     dim = len(mu)
-    result = []
-    for sample in range(0,n):
+    samples = np.zeros((n,dim))
+    for s in range(0,n):
         w = rW(n, kappa, dim)
-        #v = sample_tangent_unit(mu)
-        v = np.random.randn(dim)
-        v = v / np.linalg.norm(v) 
-        result.append(np.sqrt(1-w**2)*v + w*mu)
+        v = sample_tangent_unit(mu).ravel()
+        #v = np.random.randn(dim)
+        #v = v / np.linalg.norm(v) 
+        samples[s] = np.sqrt(1-w**2)*v + w*mu
 
-    return result
+    return samples
 ## end of copied code
 
 def vMFpdf(x, mu, kappa):
@@ -66,6 +63,18 @@ def kappa_conditional_pdf(x, mu, mu0, a, b):
     p = mu.shape[0]
     return (x ** (p/2 - 1)/iv(p/2 - 1, x)) ** a  * np.exp(b * x * np.dot(mu , mu0.T))
 
+
+def circ_mean(x):
+    x_bar = np.mean(x, axis=0) 
+    R_bar = la.norm(x_bar)
+    return x_bar/R_bar, R_bar
+
+
+def concentration(x):
+    _, R_bar = circ_mean(x)
+    kappa = (R_bar* (len(x[0]) - R_bar ** 2)) / (1 - R_bar ** 2)
+    return kappa
+
 def wstep_out(slb, srb, p, y, increment = 0.5):
     # fix right bound
     while not math.isinf(p(srb)) and  y < p(srb) :
@@ -77,8 +86,6 @@ def wstep_out(slb, srb, p, y, increment = 0.5):
         slb=0
     else:
         while not math.isinf(p(slb)) and y < p(slb):
-            print(slb)
-            print(p(slb))
             slb -= increment
             if slb < 0:
                 slb = 0
@@ -113,19 +120,21 @@ def slice_sampler(p, w, niter=500, step_out=True):
 
 if __name__ == "__main__" :
     #mu0 = np.array([0.15384193,0.14248371,0.9777684 ])
-    #mu = np.array([0.84606022, 0.42302811, 0.32439069] )
+    #mu = np.array([0.84606022, 0.42302811] )
 
-    m = np.random.multivariate_normal([1, 3, 5, 1], [[7, 0, 0, 0], [0, 7, 0, 0], [0, 0, 7, 0], [0, 0, 0, 7] ], size=2)
+    m = np.random.multivariate_normal([0, 0], [[4, 0], [0, 4]], size=2)
     mu = m[0]/np.linalg.norm(m[0])
-    mu0 = m[1]/np.linalg.norm(m[1])
+    print(mu)
     p = lambda x: kappa_conditional_pdf(x, mu , mu, 1, 0.9)
-    x = np.arange(0, 100, 10e-3)
-    y = [p(e) for e in x]
-    #plt.plot(x,y )
-    #plt.show()
     s = slice_sampler(p, 5)
     
     
+    print(s[-1])
     #plt.show()
-    print(rvMF(5, mu, s[-1]))
+    vmfs = rvMF(50000, mu, s[-1])
+    print("standard sample mean = "  + str(np.mean(vmfs, axis=0)))
+    print("estimated mean = " + str(circ_mean(vmfs)))
+    print("estimated concentration = " + str(concentration(vmfs)))
+    plt.scatter(vmfs[:, 0], vmfs[:, 1])
+    plt.show()
 
