@@ -1,15 +1,20 @@
 
 import numpy as np
+from numpy.linalg import norm
 import scipy as sc
 import scipy.stats
 from scipy.special  import iv 
 import scipy.linalg as la
-from scipy.stats import norm, poisson
+from scipy.stats import  gamma
 import math
+from math import log
 import matplotlib.pyplot as plt
 import sys
 
-# vMF sampling function code taken from https://stats.stackexchange.com/questions/156729/sampling-from-von-mises-fisher-distribution-in-python (corrections and modifications were performed)
+# vMF sampling function code taken ( with substantial corrections and modifications)) from https://stats.stackexchange.com/questions/156729/sampling-from-von-mises-fisher-distribution-in-python 
+
+maxkappa = 300
+
 
 def sample_tangent_unit(mu):
     mat = np.matrix(mu)
@@ -55,15 +60,36 @@ def rvMF(n, mu, kappa):
 
 def vMFpdf(x, mu, kappa):
     p = len(mu)
-    C_p = lambda k: (k ** (p/2 - 1))/( ((2 * math.PI)**(p/2)) * iv(p/2 - 1, k))
+    C_p = lambda k: (k ** (p/2 - 1))/( ((2 * math.pi)**(p/2)) * iv(p/2 - 1, k))
 
     d = C_p(kappa) * np.exp(kappa * np.dot(mu , x.T))
+    return d
 
-def kappa_conditional_pdf(x, mu, mu0, a, b):
+def vMFlogpdf(x, mu, kappa):
+    p = len(mu)
+    logC_p = lambda k: (p/2 - 1)*log(k) - p/2 * log(2 * math.pi) - log( iv(p/2 - 1, k))
+
+    d = logC_p(kappa) + kappa * np.dot(mu , x.T)
+    return d
+
+
+
+def kappa_pdf(x, mu, mu0, k0, a, b, data):
+    if x < 0 or x > maxkappa:
+        return 0
     p = mu.shape[0]
-    return (x ** (p/2 - 1)/iv(p/2 - 1, x)) ** a  * np.exp(b * x * np.dot(mu , mu0.T))
+
+    logprior = gamma.logpdf(x, a, scale=1/b)
+
+    loglikelihood = np.sum([vMFlogpdf(e, mu, x) for e in data ])
+
+    return math.exp(loglikelihood + logprior)
 
 
+    #return (x ** (p/2 - 1)/iv(p/2 - 1, x)) ** a  * np.exp(b * x * np.dot(mu , mu0.T))
+
+
+    
 def circ_mean(x):
     x_bar = np.mean(x, axis=0) 
     R_bar = la.norm(x_bar)
@@ -80,8 +106,6 @@ def wstep_out(slb, srb, p, y, increment = 0.5):
     while not math.isinf(p(srb)) and  y < p(srb) :
         srb += increment
     
-    while math.isinf(p(srb)):
-        srb -= increment
     if slb < 0: 
         slb=0
     else:
@@ -91,11 +115,8 @@ def wstep_out(slb, srb, p, y, increment = 0.5):
                 slb = 0
                 break
 
-    while math.isinf(p(slb)):
-        srb += increment
-
     return slb, srb
-def slice_sampler(p, w, niter=500, step_out=True):
+def slice_sampler(p, w, niter=5, step_out=True):
     default_w = w
     samples = np.zeros((niter,))
     x = 1
@@ -121,11 +142,21 @@ def slice_sampler(p, w, niter=500, step_out=True):
 if __name__ == "__main__" :
     #mu0 = np.array([0.15384193,0.14248371,0.9777684 ])
     #mu = np.array([0.84606022, 0.42302811] )
+#[0.92297639 0.38485656]
+#[ 0.60070391 -0.79947158]
+#[ 0.85144824 -0.52443865]
+#[0.84784105 0.53025046]
+#[0.84917719 0.52810804]
+#[-0.89956008  0.43679704]
+#[ 0.99151889 -0.12996263]
+#[0.07180866 0.99741843]
 
-    m = np.random.multivariate_normal([0, 0], [[4, 0], [0, 4]], size=2)
+    vMFpdf(np.array([0,-1]), np.array([0, 1]), 0.5)
+    sys.exit()
+    m = np.random.multivariate_normal([0, 0], [[1, 0], [0, 1]], size=2)
     mu = m[0]/np.linalg.norm(m[0])
     print(mu)
-    p = lambda x: kappa_conditional_pdf(x, mu , mu, 1, 0.9)
+    p = lambda x: kappal_pdf(x, mu , mu, 1, 0.9)
     s = slice_sampler(p, 5)
     
     
