@@ -10,6 +10,7 @@ import math
 from math import log
 import matplotlib.pyplot as plt
 import sys
+import time
 
 # vMF sampling function code taken ( with substantial corrections and modifications)) from https://stats.stackexchange.com/questions/156729/sampling-from-von-mises-fisher-distribution-in-python 
 
@@ -58,12 +59,14 @@ def rvMF(n, mu, kappa):
     return samples
 ## end of copied code
 
-def vMFpdf(x, mu, kappa):
+def vMFpdf(x, mu, k):
     p = len(mu)
-    C_p = lambda k: (k ** (p/2 - 1))/( ((2 * math.pi)**(p/2)) * iv(p/2 - 1, k))
 
-    d = C_p(kappa) * np.exp(kappa * np.dot(mu , x.T))
-    return d
+    f = lambda x_i : ((k ** (p/2 - 1))/( ((2 * math.pi)**(p/2)) * iv(p/2 - 1, k))) * np.exp(k * np.dot(mu , x_i.T))
+    if hasattr(x, "__len__"):
+        return np.array(list(map(f, x)))
+
+    return f(x)
 
 def vMFlogpdf(x, mu, kappa):
     p = len(mu)
@@ -78,10 +81,9 @@ def kappa_pdf(x, mu, mu0, k0, a, b, data):
     if x < 0 or x > maxkappa:
         return 0
     p = mu.shape[0]
-
     logprior = gamma.logpdf(x, a, scale=1/b)
-
-    loglikelihood = np.sum([vMFlogpdf(e, mu, x) for e in data ])
+    vmflp = lambda e: vMFlogpdf(e, mu, x)
+    loglikelihood = np.sum(list(map(vmflp, data)))
 
     return math.exp(loglikelihood + logprior)
 
@@ -101,7 +103,7 @@ def concentration(x):
     kappa = (R_bar* (len(x[0]) - R_bar ** 2)) / (1 - R_bar ** 2)
     return kappa
 
-def wstep_out(slb, srb, p, y, increment = 0.5):
+def wstep_out(slb, srb, p, y, increment = 3):
     # fix right bound
     while not math.isinf(p(srb)) and  y < p(srb) :
         srb += increment
@@ -116,10 +118,10 @@ def wstep_out(slb, srb, p, y, increment = 0.5):
                 break
 
     return slb, srb
-def slice_sampler(p, w, niter=5, step_out=True):
+def slice_sampler(start, p, w, niter=5, step_out=True):
     default_w = w
     samples = np.zeros((niter,))
-    x = 1
+    x = start
     for n in range(niter):
         y = np.random.random() * p(x)
         offset = np.random.random() * w
@@ -129,6 +131,10 @@ def slice_sampler(p, w, niter=5, step_out=True):
         proposal = w_lbound + np.random.random() * (w_rbound - w_lbound)
         while y > p(proposal):
             proposal = w_lbound + np.random.random() * (w_rbound - w_lbound)
+            if proposal > x :
+                w_rbound = proposal
+            else :
+                w_lbound = proposal
 
         samples[n] = proposal
         x = proposal
@@ -140,29 +146,24 @@ def slice_sampler(p, w, niter=5, step_out=True):
 
 
 if __name__ == "__main__" :
-    #mu0 = np.array([0.15384193,0.14248371,0.9777684 ])
-    #mu = np.array([0.84606022, 0.42302811] )
-#[0.92297639 0.38485656]
-#[ 0.60070391 -0.79947158]
-#[ 0.85144824 -0.52443865]
-#[0.84784105 0.53025046]
-#[0.84917719 0.52810804]
-#[-0.89956008  0.43679704]
-#[ 0.99151889 -0.12996263]
-#[0.07180866 0.99741843]
 
-    vMFpdf(np.array([0,-1]), np.array([0, 1]), 0.5)
-    sys.exit()
-    m = np.random.multivariate_normal([0, 0], [[1, 0], [0, 1]], size=2)
+    m = np.random.multivariate_normal([0, 0], [[1, 0], [0, 1]], size=1)
     mu = m[0]/np.linalg.norm(m[0])
     print(mu)
-    p = lambda x: kappal_pdf(x, mu , mu, 1, 0.9)
-    s = slice_sampler(p, 5)
+    vmfs = rvMF(500, mu, 10)
+    p = lambda x: kappa_pdf(x, mu , mu, 0.01, 1, 0.9, vmfs)
+    s = [slice_sampler(concentration(vmfs), p, 5, niter=2)[-1] for pe in range(1000)]
+    x = np.arange(0.1, 100, 0.1)
+    y = [p(e) for e in x]
+    plt.plot(x, y)
+    plt.show()
+
     
-    
-    print(s[-1])
-    #plt.show()
-    vmfs = rvMF(50000, mu, s[-1])
+    print(y)
+    print("estimated kappa: "  + str(np.mean(s)))
+    plt.hist(s)
+    plt.show()
+    sys.exit()
     print("standard sample mean = "  + str(np.mean(vmfs, axis=0)))
     print("estimated mean = " + str(circ_mean(vmfs)))
     print("estimated concentration = " + str(concentration(vmfs)))

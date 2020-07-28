@@ -10,15 +10,16 @@ import imageio
 from sklearn.cluster import KMeans
 import sys
 import directionalstats as ds
-
+import time
 #np.set_printoptions(precision=4)
 
 
 def init(x, random=True):
     pi = np.random.dirichlet(alpha, size=1)[0]
     mus = [ds.rvMF(1,mu0, kappa0)[0] for k in range(K)]
-    kappas = [ np.random.gamma(a, 1/b , size=1)[0]  for k in range(K)]
+    kappas = [ np.random.random() * 300  for k in range(K)]
 
+    print(kappas)
     z = np.array([np.argwhere(np.random.multinomial(1, [1/K] * K) == 1).ravel()[0] for x_i in x]) #initialize z randomly
 
     if DEBUG:
@@ -30,14 +31,12 @@ def init(x, random=True):
 
 
 def sample_z(x, mus, kappas, pi):
+    start = time.time()
     z = []
     p_k = np.zeros((x.shape[0], K), dtype="float64")
     pxi = []
     for k in range(K):
-        for x_i in x:
-            pxi.append( pi[k] * ds.vMFpdf(x_i, mus[k], kappas[k]))
-        p_k[:, k] = pxi
-        pxi = []
+        p_k[:, k] =  pi[k] * ds.vMFpdf(x, mus[k], kappas[k])
 
     p_k = p_k/np.sum(p_k, axis = 1, dtype="float64")[:, np.newaxis]
 
@@ -68,21 +67,27 @@ def sample_mu(kappa_k, z, x):
     return samples
 
 
+sliced = 0
 
 
 def sample_kappa(means,z, x):
+    mlks = []    
     samples = []
     for k in range(K):
         x_k = x[np.argwhere(z == k).ravel()]
+        if x_k.shape[0] == 0:
+            samples.append(kappa0)
+            continue
         p = lambda x: ds.kappa_pdf(x, means[k], mu0, kappa0, a, b, x_k)
-    #    print("here)")
-    #    x = np.arange(0.1, 100, 0.1)
-    #    y = [p(e) for e in x] 
-    #    plt.plot(x, y)
-    #    print(y)
-    #    plt.show()
-    #    sys.exit()
-        samples.append(ds.slice_sampler(p, 1)[-1])
+   #     print("here)")
+   #     x = np.arange(0.1, 100, 0.1)
+   #     y = [p(e) for e in x] 
+   #     plt.plot(x, y)
+   #     print(y)
+   #     plt.show()
+   #     sys.exit()
+        mlks.append(ds.concentration(x_k))
+        samples.append(ds.slice_sampler(ds.concentration(x_k), p, 3, niter=2)[-1])
     return samples
 
 images = []
@@ -119,15 +124,13 @@ def gibbs_sampler(x, niter=100):
     sampled_mus = np.zeros((niter, K, P))
     sampled_kappas = np.zeros((niter, K))
     sampled_pis = np.zeros((niter, K))
-    sampled_z = np.zeros((niter, len(x)))
     
     sampled_mus[0] = np.array(mus)
     sampled_kappas[0] = kappas
     sampled_pis[0] = pi
-    sampled_z[0] = z 
     
     for n in range(1, niter):
-        print("ITER {}/{}".format(str(n), str(niter)) , end= "\n" if  DEBUG else "\r", flush=not DEBUG )
+        print("ITER {}/{}".format(str(n), str(niter)) )
         
         if n > 1:
             z = sample_z(x, sampled_mus[n - 1], sampled_kappas[n - 1], sampled_pis[n - 1])
@@ -135,9 +138,8 @@ def gibbs_sampler(x, niter=100):
         sampled_pis[n] = sample_pi(z)
         sampled_mus[n] = sample_mu(sampled_kappas[n - 1], z, x )
         sampled_kappas[n] = sample_kappa(sampled_mus[n], z, x )
-        sampled_z = z
         
-        if PLOT: show(n, x, z, sampled_mus[n], sampled_kappas[n])
+       # if PLOT: show(n, x, z, sampled_mus[n], sampled_kappas[n])
 
 
     print("")
@@ -149,6 +151,17 @@ def gibbs_sampler(x, niter=100):
     print("final kappas : " + str(sampled_kappas[-1]))
     print("final pis: " + str(sampled_pis[-1]))
     
+
+    print("ESTIMATES : ")
+    avgmus = np.zeros((K, P))
+    for k in range(K):
+        avgmus[k] = np.mean(sampled_mus[-(niter - 700):, k, :], axis=0)
+    print("avg mu" + str(avgmus))
+    print("avg kappa" +  str(np.mean(sampled_kappas[-(niter - 700):], axis=0)))
+    it = np.arange(niter)
+    for k in range(K):
+        plt.plot(it, sampled_kappas[:, k])
+    plt.show()
 
 
 
@@ -215,8 +228,8 @@ np.random.shuffle(x)
 #Hyper-parameters
 alpha = [2] * K
 mu0, _ = ds.circ_mean(x)
-#kappa0 = ds.concentration(x)
-kappa0 = 0.01
+kappa0 = ds.concentration(x)
+#kappa0 = 0.01
 a = 1
 b = 0.001
 
