@@ -25,44 +25,49 @@ def show(itern, x, z):
 
 
 
-def pxi(x_i, xm, N):
-
-    V_n = 1/(1/V0 + N)
-    m_n = V_n * (m0/V0 + N*xm)
-    a_n = a0 + N/2
-    b_n = b0 + 0.5 * (m0 ** 2/V0 + np.sum(x ** 2, axis=0) - m_n**2/V_n)
+def pxi(x_i, x_k, N_k):
+    if N_k == 0:
+        xm = 0
+    else : 
+        xm = np.mean(x_k, axis=0)
+    m_n = (k0 * m0 + N_k * xm)/(k0 + N_k)
+    k_n = k0 + N_k
+    a_n = a0 + N_k/2
+    b_n = b0 + 0.5 * np.sum((x_k - xm) ** 2 , axis=0) + k0 * N_k * (xm - m0) ** 2 / (2 * (k0 + N_k))
 
     df = 2 * a_n
-    t_scale = (b_n * (1 + V_n))/a_n
+    t_scale = (b_n * (1 + k_n))/(a_n * k_n)
 
     return t.logpdf(x_i, df, loc=m_n, scale=t_scale)
 
 def collapsed_gibbs_sampler(x, niter=100):
     xlen = x.shape[0]
-
     z = np.array([np.argwhere(np.random.multinomial(1,[1/K] * K) == 1).ravel()[0] for e in range(xlen)])
-    suff_stats = {k: z[z==k].shape[0] for k in range(K)}
-    
     for n in range(niter):
         print("ITER {}/{}".format(str(n), str(niter)) , end= "\n" if  DEBUG else "\r", flush=not DEBUG )
         for i in range(xlen):
             p_z = np.zeros((K, ))
-            if suff_stats[z[i]] > 0: suff_stats[z[i]] -= 1
             for k in range(K):
                 x_k = x[np.argwhere(z == k).ravel()]
-                N = x_k.shape[0]
-                if N == 0:
-                    xm = 0
-                else : 
-                    xm = np.mean(x_k, axis=0)
-                p_xi = pxi(x[i] , xm, N)
-                p_z[k] =  math.exp(math.log((suff_stats[k]  + alpha[k]/K)/(xlen + alpha[k] - 1)) + p_xi)
+                if x_k.shape[0] > 0:
+                    x_k =  np.delete(x_k, np.unravel_index((x_k == x[i]).argmax(), x_k.shape))
+                N_k = x_k.shape[0] 
+                p_xi = pxi(x[i] , x_k, N_k)
+                p_z[k] = math.exp( math.log((N_k + alpha[k]/K)) + p_xi - math.log((xlen + alpha[k] - 1))  )
             p_z = p_z/np.sum(p_z)
             z[i] =  np.argwhere(np.random.multinomial(1, p_z) == 1).ravel()[0]
-            suff_stats[z[i]] += 1
-        print(suff_stats)
-        show(n, x, z)
+        if PLOT: show(n, x, z)
 
+    x_ks = [x[np.argwhere(z == k).ravel()] for k in range(K)]
+    mus = np.array([np.mean(x_k) for x_k in x_ks])
+    vs = np.array([np.std(x_k) for x_k in x_ks])
+    print("Results : ")
+    print("mus : " + str(mus))
+    print("vs : " + str(vs))
+
+    print("True:")
+    print("mus : " + str(original_mus))
+    print("vs : " + str(original_Vs))
 
 
                 
@@ -120,9 +125,9 @@ np.random.shuffle(x)
 #Hyper-parameters
 alpha = [2] * K
 m0 = np.mean(x)
-V0 = 1000
-a0 = 2
-b0 = 2
+k0 = 0.01
+a0 = 0.5
+b0 = 0.5
 
 
 
@@ -130,4 +135,3 @@ b0 = 2
 collapsed_gibbs_sampler(x, niter=niter)
 if PLOT :
     imageio.mimsave("convergence_anim.gif", images, duration=0.1)
-    plt.savefig("figures/avg_log_likelihood_{}".format(str(M)))
