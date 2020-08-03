@@ -68,12 +68,21 @@ def vMFpdf(x, mu, k):
 
     return f(x)
 
+def slow_vMFlogpdf(x, mu, kappa):
+    p = len(mu)
+
+    lf = lambda x_i : (p/2 - 1)*log(kappa) - p/2 * log(2 * math.pi) - log( iv(p/2 - 1, kappa)) + kappa * np.dot(mu , x_i.T)
+    if len(x.shape) > 1:
+        return np.array(list(map(lf, x)))
+
+    return lf(x)
+
 def vMFlogpdf(x, mu, kappa):
     p = len(mu)
-    logC_p = lambda k: (p/2 - 1)*log(k) - p/2 * log(2 * math.pi) - log( iv(p/2 - 1, k))
 
-    d = logC_p(kappa) + kappa * np.dot(mu , x.T)
-    return d
+    return (p/2 - 1)*log(kappa) - p/2 * log(2 * math.pi) - log( iv(p/2 - 1, kappa)) + kappa * np.matmul(x, mu )
+
+
 
 
 
@@ -82,8 +91,11 @@ def kappa_pdf(x, mu, mu0, k0, a, b, data):
         return 0
     p = mu.shape[0]
     logprior = gamma.logpdf(x, a, scale=1/b)
-    vmflp = lambda e: vMFlogpdf(e, mu, x)
-    loglikelihood = np.sum(list(map(vmflp, data)))
+    if data.shape[0] == 0:
+        loglikelihood = 0
+    else:
+        vmflp = lambda e: vMFlogpdf(e, mu, x)
+        loglikelihood = np.sum(list(map(vmflp, data)))
 
     return math.exp(loglikelihood + logprior)
 
@@ -105,7 +117,7 @@ def concentration(x):
 
 def wstep_out(slb, srb, p, y, increment = 3):
     # fix right bound
-    while not math.isinf(p(srb)) and  y < p(srb) :
+    while  y < p(srb) :
         srb += increment
     
     if slb < 0: 

@@ -188,7 +188,6 @@ def DP_gibbs_sampler(x, niter=100):
             break
 
     u,  c = np.unique(sampled_z, return_counts=True)
-
     disp_order = u[np.argsort(c)[::-1]]
     print(disp_order)
     print("")
@@ -199,7 +198,7 @@ def DP_gibbs_sampler(x, niter=100):
     print("final Mus : " + str(np.array(sampled_mus[-1])[disp_order]))
     print("final std devs : " + str(np.array(list(map(math.sqrt, sampled_Vs[-1][disp_order])))))
     print("final pis: " + str(sampled_pis[-1][disp_order]))
-    plt.bar(u, c)
+    plt.bar(disp_order, c[disp_order])
     plt.show()
     
 
@@ -279,4 +278,4 @@ DP_gibbs_sampler(x, niter=niter)
 if PLOT :
     imageio.mimsave("convergence_anim.gif", images, duration=0.1)
     plt.plot(list(range(len(ilmeans))), ilmeans)
-    plt.savefig("figures/avg_log_likelihood_{}".format(str(M)))
+    plt.savefig("figures/avg_log_likelithe book,not life. life 0/10. I wouldn'hood_{}".format(str(M)))

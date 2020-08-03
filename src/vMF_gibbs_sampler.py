@@ -36,11 +36,17 @@ def sample_z(x, mus, kappas, pi):
     p_k = np.zeros((x.shape[0], K), dtype="float64")
     pxi = []
     for k in range(K):
-        p_k[:, k] =  pi[k] * ds.vMFpdf(x, mus[k], kappas[k])
+        p_k[:, k] =  np.exp(math.log(pi[k]) + ds.vMFlogpdf(x, mus[k], kappas[k]))
 
     p_k = p_k/np.sum(p_k, axis = 1, dtype="float64")[:, np.newaxis]
 
-    z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
+    try:
+        z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
+    except:
+        print(p_k)
+        print("parameters")
+        print(mus)
+        print(kappas)
     return np.array(z)
  
 def sample_pi(z):
@@ -70,24 +76,20 @@ def sample_mu(kappa_k, z, x):
 sliced = 0
 
 
-def sample_kappa(means,z, x):
-    mlks = []    
+def sample_kappa(means,z, x, start):
     samples = []
     for k in range(K):
         x_k = x[np.argwhere(z == k).ravel()]
-        if x_k.shape[0] == 0:
-            samples.append(kappa0)
-            continue
         p = lambda x: ds.kappa_pdf(x, means[k], mu0, kappa0, a, b, x_k)
-   #     print("here)")
-   #     x = np.arange(0.1, 100, 0.1)
-   #     y = [p(e) for e in x] 
-   #     plt.plot(x, y)
-   #     print(y)
-   #     plt.show()
-   #     sys.exit()
-        mlks.append(ds.concentration(x_k))
-        samples.append(ds.slice_sampler(ds.concentration(x_k), p, 3, niter=2)[-1])
+      #  if x_k.shape[0] == 0:
+      #      print("here)")
+      #      x = np.arange(0.1, 100, 0.1)
+      #      y = [p(e) for e in x] 
+      #      plt.plot(x, y)
+      #      print(y)
+      #      plt.show()
+      #      sys.exit()
+        samples.append(ds.slice_sampler(start[k], p, 3, niter=2)[-1])
     return samples
 
 images = []
@@ -97,7 +99,8 @@ def show(itern, x, z, mus, kappas):
         plt.scatter(x_k[:, 0], x_k[:, 1], label="K={}".format(k))
     plt.title("iter = {}, means = {}, kappas = {}".format(str(itern), mus, kappas), fontsize=8)
     plt.savefig("figures/iter_" + str(itern))
-    plt.clf()
+    plt.clf() 
+
     images.append(imageio.imread("figures/iter_"+  str(itern) + ".png"))
 
 
@@ -137,7 +140,7 @@ def gibbs_sampler(x, niter=100):
 
         sampled_pis[n] = sample_pi(z)
         sampled_mus[n] = sample_mu(sampled_kappas[n - 1], z, x )
-        sampled_kappas[n] = sample_kappa(sampled_mus[n], z, x )
+        sampled_kappas[n] = sample_kappa(sampled_mus[n], z, x , sampled_kappas[n - 1])
         
        # if PLOT: show(n, x, z, sampled_mus[n], sampled_kappas[n])
 
@@ -155,9 +158,10 @@ def gibbs_sampler(x, niter=100):
     print("ESTIMATES : ")
     avgmus = np.zeros((K, P))
     for k in range(K):
-        avgmus[k] = np.mean(sampled_mus[-(niter - 700):, k, :], axis=0)
+        avgmus[k] = np.mean(sampled_mus[-100:, k, :], axis=0)
+    print("prior mu " + str(mu0))
     print("avg mu" + str(avgmus))
-    print("avg kappa" +  str(np.mean(sampled_kappas[-(niter - 700):], axis=0)))
+    print("avg kappa" +  str(np.mean(sampled_kappas[-100:], axis=0)))
     it = np.arange(niter)
     for k in range(K):
         plt.plot(it, sampled_kappas[:, k])
@@ -228,10 +232,10 @@ np.random.shuffle(x)
 #Hyper-parameters
 alpha = [2] * K
 mu0, _ = ds.circ_mean(x)
-kappa0 = ds.concentration(x)
-#kappa0 = 0.01
+#kappa0 = ds.concentration(x)
+kappa0 = 0.001
 a = 1
-b = 0.001
+b = 0.1
 
 
 gibbs_sampler(x, niter=niter)
