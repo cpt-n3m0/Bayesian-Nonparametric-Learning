@@ -14,7 +14,6 @@ import sys
 
 
 def init(x, random=True):
-    pi = np.random.dirichlet(alpha, size=1)[0]
     mus = [np.random.multivariate_normal(m0, cov0, size=1) for k in range(K)]
     covs = [np.linalg.inv(wishart.rvs(df=P, scale=(np.identity(P)))) for k in range(K)]
 
@@ -25,7 +24,7 @@ def init(x, random=True):
         print("pi: {}".format(str(pi)))
         print("mus: {}".format(str(mus)))
         print("Vs: {}".format(str(Vs)))
-    return pi, mus, covs, z
+    return  mus, covs, z
 
 
 def sample_z(x, mus, sigmas, pi):
@@ -33,7 +32,11 @@ def sample_z(x, mus, sigmas, pi):
     p_k = np.zeros((x.shape[0], K), dtype="float64")
     
     for k in range(K):
-        p_k[:, k] = pi[k] * multivariate_normal.pdf(x, mus[k], sigmas[k])
+        try:
+            p_k[:, k] = pi[k] * multivariate_normal.pdf(x, mus[k], sigmas[k])
+        except:
+            print(mus)
+            print(sigmas)
 
     p_k = p_k/np.sum(p_k, axis = 1, dtype="float64")[:, np.newaxis]
 
@@ -41,16 +44,20 @@ def sample_z(x, mus, sigmas, pi):
     return np.array(z)
  
 def sample_pi(z):
-    z_counts=np.zeros(K)
+    pis = np.zeros((K,))
+    Vs = np.zeros((K,))
     for k in range(K):
-        z_counts[k] = np.where(z == k)[0].shape[0]
-
-    new_alpha = alpha + z_counts
-    if DEBUG:
-        print("sampling pi ...")
-        print("new alpha: " + str(new_alpha))
-    return np.random.dirichlet(new_alpha)
-
+        N_k = np.where(z == k)[0].shape[0]
+        N_l = np.where(z > k)[0].shape[0]
+        a = 1 + N_k
+        b = alpha + N_l
+        if k == 0:
+            pis[0] = np.random.beta(a, b)
+            Vs[k] = 1 - pis[0]
+            continue
+        Vs[k] = np.random.beta(a, b)
+        pis[k] = Vs[k] * (1 - np.sum(pis[:k]))
+    return pis
 
 def sample_mu(sig_k, ks_mean, N):
     
@@ -101,26 +108,39 @@ def check_stop(x, sampled_mus, sampled_Vs, z):
         iter_likelihoods.append(log_likelihood(x, sampled_mus, sampled_Vs, z))
         ilmeans.append(np.mean(iter_likelihoods[-M:]))
         return len(ilmeans) > 2 and abs(ilmeans[-2] - ilmeans[-1]) < 0.1 
-    
+
+
+
+def truncate(x, alpha):
+    mdense = lambda n: 4 * x.shape[0] * math.exp(-(n - 1)/alpha)
+    # xa = np.arange(100)
+    # ya = [mdense(e) for e in xa]
+    # print(ya[20:40])
+    max_K = 50
+    candidate_K = 2
+    while mdense(candidate_K) > 0.5 and candidate_K < max_K:
+        candidate_K += 1
+
+    return candidate_K   
 
 
 
 def gibbs_sampler(x, niter=100):
-    
-    global ITER
-    pi, mus, sigmas, z = init(x)
+    global K
+    K = truncate(x, alpha) 
+    mus, sigmas, z = init(x)
+
     sampled_mus = np.zeros((niter, K, P))
     sampled_sigmas = np.zeros((niter, K, P, P))
     sampled_pis = np.zeros((niter, K))
-    sampled_z = z
     
     sampled_mus[0] = mus
     sampled_sigmas[0] = sigmas
-    sampled_pis[0] = pi
-
+    sampled_pis[0] = [1/K] * K
+    sampled_z = z
     for n in range(1, niter):
-        print("ITER {}/{}".format(str(n), str(niter)) , end= "\n" if  DEBUG else "\r", flush=not DEBUG )    
-
+        print("ITER {}/{}".format(str(n), str(niter)) , end= "\n" if  DEBUG else "\r", flush=not DEBUG )
+        
         #-------------------------Sampling start-------------------------------
         if n > 1:
             z = sample_z(x, sampled_mus[n-1], sampled_sigmas[n-1], sampled_pis[n-1])
@@ -137,24 +157,28 @@ def gibbs_sampler(x, niter=100):
                 continue
             ks_mean[k] = np.mean(ks, axis=0)
 
+
         sampled_mus[n] = sample_mu(sampled_sigmas[n - 1], ks_mean, N )
         sampled_sigmas[n] = sample_v(sampled_mus[n - 1],x, z)
         sampled_z = z
-        
+
         if PLOT:
             show(n, x, z,  np.array(imus), np.array(iVs), np.array(ipi))
 
+    u,  c = np.unique(sampled_z, return_counts=True)
+    disp_order = u[np.argsort(c)[::-1]]
 
     print("")
     print("True parameters")
     print("Mus : " + str(np.array(original_mus)))
     print("std devs : " + str(np.array(original_covs)))
     print("final samples")
-    print("final Mus : " + str(np.array(sampled_mus[-1])))
-    print("final std devs : " + str(sampled_sigmas[-1]))
-    print("final pis: " + str(sampled_pis[-1]))
+    print("final Mus : " + str(np.array(sampled_mus[-1])[disp_order]))
+    print("final std devs : " + str(np.array(sampled_sigmas[-1])[disp_order]))
+    print("final pis: " + str(np.array(sampled_pis[-1])[disp_order]))
     
-
+    plt.bar(disp_order, np.sort(c)[::-1])
+    plt.show()
 
 
 
@@ -171,6 +195,7 @@ except:
     print("Usage multivariate_gibbs_sampler.py Dimensions [...]")
     sys.exit(0)
 
+MARGINALS = False
 
 DEBUG = "-d" in sys.argv
 EARLYSTOP = "--earlystop" in sys.argv
@@ -221,9 +246,9 @@ np.random.shuffle(x)
 
 #Hyper-parameters
 M = 20 # number of samples considered for likelihood stop calculation
-alpha = [2] * K
+alpha = 2
 m0 = np.mean(x, axis=0)
-cov0 = np.matrix(1000 * np.identity(P))
+cov0 = np.matrix(np.diag(np.diag(np.zeros((P, P)) + 1000)))
 S0 = np.identity(P)
 v0 = P
 
