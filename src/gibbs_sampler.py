@@ -6,10 +6,18 @@ import matplotlib.pyplot as plt
 from scipy.stats import norm
 import math
 import imageio
-from sklearn.cluster import KMeans
+from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
 import sys
 
 np.set_printoptions(precision=2)
+#Hyper-parameters
+K = 0
+alpha=[] # updated based on data
+m0 = 0 # updated based on data
+V0 = 1000
+sh0 = 2
+sc0 = 2
+
 
 
 def init(x, random=True):
@@ -27,11 +35,7 @@ def init(x, random=True):
     
     z = np.array([np.argwhere(np.random.multinomial(1, [1/K] * K) == 1).ravel()[0] for x_i in x]) #initialize z randomly
 
-    if DEBUG:
-        print("INITIAL PARAMETERS")
-        print("pi: {}".format(str(pi)))
-        print("mus: {}".format(str(mus)))
-        print("Vs: {}".format(str(Vs)))
+
     return pi, mus, Vs, z
 
 
@@ -45,12 +49,8 @@ def sample_z(x, mus, Vs, pi):
 
     p_k = p_k/np.sum(p_k, axis = 1, dtype="float64")[:, np.newaxis]
 
-    try:
-        z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
-    except ValueError:
-        print(mus)
-        print(Vs)
-        sys.exit()
+    z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
+
     return np.array(z)
     return z
  
@@ -60,9 +60,7 @@ def sample_pi(z):
         z_counts[k] = np.where(z == k)[0].shape[0]
 
     new_alpha = alpha + z_counts
-    if DEBUG:
-        print("sampling pi ...")
-        print("new alpha: " + str(new_alpha))
+   
     return np.random.dirichlet(new_alpha)
 
 
@@ -80,13 +78,7 @@ def sample_v(m_k, ks_mean, ks_var, N):
     new_rates = 1/sc0 + N/2 * (ks_var + (ks_mean- m_k)**2)
 
     lmbda = [np.random.gamma(shape=new_shapes[k], scale=1/new_rates[k], size=1)[0] for k in range(K)]
-    if DEBUG:
-        print("sampling V ...")
-        print("new_shape: " + str(new_shape))
-        print("new_rate: " + str(new_rate))
-        print("sampled_precision: " + str(lmbda))
-
-
+  
     return 1/np.array(lmbda)
 
 images = []
@@ -102,48 +94,40 @@ def show(itern, x, z, mus, vs, pis):
 
 def log_likelihood(x, mus, Vs, z):
     likelihood = 0.0
-    for i in range(len(x)):
-        k = z[i]
-        likelihood += math.log(norm.pdf(x[i], mus[k], Vs[k]))
+    for k in range(K):
+        x_k = x[z == k]
+        likelihood += np.sum(norm.logpdf(x_k, mus[k], Vs[k]))
     return likelihood
 
-iter_likelihoods = []
-ilmeans = []
-def check_stop(x, sampled_mus, sampled_Vs, z):
-        iter_likelihoods.append(log_likelihood(x, sampled_mus, sampled_Vs, z))
-        ilmeans.append(np.mean(iter_likelihoods[-M:]))
-        return len(ilmeans) > 2 and abs(ilmeans[-2] - ilmeans[-1]) < 0.1 
-    
 
 
-
-def gibbs_sampler(x, niter=100):
-    
-    global ITER
+def gibbs_sampler(x, gt=[], niter=100):
     pi, mus, Vs, z = init(x)
-    sampled_mus = [mus]
-    sampled_Vs = [Vs]
-    sampled_pis = [pi]
+     
+    sampled_mus = np.zeros((niter, K))
+    sampled_Vs = np.zeros((niter, K))
+    sampled_pis = np.zeros((niter, K))
+    loglikelihood = np.zeros((niter,))
+    ARI = np.zeros((niter,))
+    AMI = np.zeros((niter,))
     sampled_z = z
-    for n in range(niter):
-        print("ITER {}/{}".format(str(n), str(niter)) , end= "\n" if  DEBUG else "\r", flush=not DEBUG )
+    
+    sampled_mus[0] = mus
+    sampled_Vs[0] = Vs
+    sampled_pis[0] = pi
+
+    for n in range(1, niter):
+        print("ITER {}/{}".format(str(n), str(niter)) , end= "\r", flush=True )
         
-        if DEBUG: 
-            print("mus : " + str(sampled_mus[-1]))
-            print("std_devs : " + str([math.sqrt(i) for i in sampled_Vs[-1]]))
-            print("pis : " + str(sampled_pis[-1]))
 
         #-------------------------Sampling start-------------------------------
-        if n > 0:
-            z = sample_z(x, sampled_mus[-1], sampled_Vs[-1], sampled_pis[-1])
-
-        if DEBUG: print(z)
+        if n > 1:
+            z = sample_z(x, sampled_mus[n-1], sampled_Vs[n-1], sampled_pis[n-1])
 
 
-        ipi  = sample_pi(z)
+
+        sampled_pis[n] = sample_pi(z)
         
-        imus = []
-        iVs  = []
         
         ks_var = np.zeros((K,))
         ks_mean = np.zeros((K,))
@@ -158,95 +142,71 @@ def gibbs_sampler(x, niter=100):
             if math.isnan(ks_var[k]):
                 ks_var[k] = 0
 
-        sampled_mus.append(sample_mu(sampled_Vs[-1], ks_mean, N ))
-        sampled_Vs.append(sample_v(sampled_mus[-1], ks_mean, ks_var, N ))
-        sampled_pis.append(ipi)
+        sampled_mus[n] = sample_mu(sampled_Vs[n-1], ks_mean, N )
+        sampled_Vs[n] = sample_v(sampled_mus[n], ks_mean, ks_var, N )
         sampled_z = z
         
-        if PLOT:
-            show(n, x, z,  np.array(imus), np.array(iVs), np.array(ipi))
-        if EARLYSTOP and check_stop(x, sampled_mus[-1], sampled_Vs[-1], sampled_z):
-            print("")
-            print("Convergence detected. early stopping")
-            break
+        loglikelihood[n] = log_likelihood(x, sampled_mus[n], sampled_Vs[n], z)
+        if gt != []:
+            ARI[n] = adjusted_rand_score(gt, z)
+            AMI[n] = adjusted_mutual_info_score(gt, z)
+        
+    return sampled_z, loglikelihood, ARI, AMI
 
-
-    print("")
-    print("True parameters")
-    print("Mus : " + str(sorted(np.array(original_mus))))
-    print("std devs : " + str(np.array(original_Vs)))
-    print("final samples")
-    print("final Mus : " + str(sorted(np.array(sampled_mus[-1]))))
-    print("final std devs : " + str(np.array(list(map(math.sqrt, sampled_Vs[-1])))))
-    print("final pis: " + str(sampled_pis[-1]))
     
 
 
-
-
-
-
-
-## interface
-
-
-#Flags
-
-MARGINALS = False
-
-DEBUG = "-d" in sys.argv
-EARLYSTOP = "--earlystop" in sys.argv
-PLOT =  "--no-plot" not in sys.argv
-
-if "-maxiter" in sys.argv:
-    niter = int(sys.argv[sys.argv.index("-maxiter") + 1]) 
-else:
-    niter=1000
-
-
-
-if "-getmarginals" in sys.argv:
-    MARGINALS = True
-
-
-if "-s" in sys.argv:
-    K = int(sys.argv[sys.argv.index("-s") + 1]) 
-    N = int(sys.argv[sys.argv.index("-s") + 2]) 
+def synth_data(original_pi, N):
+    global K, alpha, m0
+    K = len(original_pi)
     #generate synthetic dataset
     components = []
     original_mus = []
     original_Vs = []
-    for i in range(K):
-        loc = np.random.random() * 100
-        scale = np.random.random() * 5
+    x = np.zeros((N,))
+    y = np.zeros((N,))
+
+    for k in range(K):
+        loc = np.random.random() * 200
+        scale = np.random.random() * 10
         c = np.random.normal(loc=loc, scale=scale, size=N)
         original_mus.append(loc)
         original_Vs.append(scale)
-        components.append(c)
-    x = np.concatenate(components)
-
-elif "-f" in sys.argv:
-    # read data from file
-    ds = sys.argv[sys.argv.index("-f") + 1]
-    K = int(sys.argv[sys.argv.index("-f") + 2]) 
-    x = np.genfromtxt(ds, delimiter=',')
-
-
-np.random.shuffle(x)
-
-#Hyper-parameters
-M = 20 # number of samples considered for likelihood stop calculation
-alpha = [2] * K
-m0 = np.mean(x)
-V0 = 100000
-sh0 = 0.0001
-sc0 = 0.0001
+    for i in range(N):
+        z = np.argwhere(np.random.multinomial(1, original_pi) == 1).ravel()[0]
+        x[i] = np.random.normal(original_mus[z], original_Vs[z], size=1)[0]
+        y[i] = z
+        
+    
+    alpha = [2] * K
+    m0 = np.mean(x)
+    return x, y
 
 
 
+if __name__ == "__main__":
 
-gibbs_sampler(x, niter=niter)
-if PLOT :
-    imageio.mimsave("convergence_anim.gif", images, duration=0.1)
-    plt.plot(list(range(len(ilmeans))), ilmeans)
-    plt.savefig("figures/avg_log_likelihood_{}".format(str(M)))
+    #Flags
+    DEBUG = "-d" in sys.argv
+    PLOT =  "-plot" in sys.argv
+
+    if "-maxiter" in sys.argv:
+        niter = int(sys.argv[sys.argv.index("-maxiter") + 1]) 
+    else:
+        niter=1000
+
+    if "-s" in sys.argv:
+        original_pi =  sys.argv[sys.argv.index("-s") + 1]
+        print(original_pi)
+        original_pi = [float(e) for e in original_pi.split(",")]
+        N = int(sys.argv[sys.argv.index("-s") + 2]) 
+        x, y = synth_data(original_pi, N)
+
+        
+
+
+    gibbs_sampler(x, niter=niter)
+    if PLOT :
+        imageio.mimsave("convergence_anim.gif", images, duration=0.1)
+        plt.plot(list(range(len(ilmeans))), ilmeans)
+        plt.savefig("figures/avg_log_likelihood_{}".format(str(M)))

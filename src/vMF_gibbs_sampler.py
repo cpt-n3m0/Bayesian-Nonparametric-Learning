@@ -8,10 +8,20 @@ from scipy.stats import wishart, multivariate_normal
 import math
 import imageio
 from sklearn.cluster import KMeans
+from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
 import sys
 import directionalstats as ds
 import time
+import nlp
 #np.set_printoptions(precision=4)
+
+alpha = []
+mu0 = []
+kappa0 = 0.001
+a = 1
+b = 0.1
+K =0
+P =0
 
 
 def init(x, random=True):
@@ -19,14 +29,9 @@ def init(x, random=True):
     mus = [ds.rvMF(1,mu0, kappa0)[0] for k in range(K)]
     kappas = [ np.random.random() * 300  for k in range(K)]
 
-    print(kappas)
     z = np.array([np.argwhere(np.random.multinomial(1, [1/K] * K) == 1).ravel()[0] for x_i in x]) #initialize z randomly
 
-    if DEBUG:
-        print("INITIAL PARAMETERS")
-        print("pi: {}".format(str(pi)))
-        print("mus: {}".format(str(mus)))
-        print("Vs: {}".format(str(kappas)))
+
     return pi, mus, kappas, z
 
 
@@ -40,13 +45,8 @@ def sample_z(x, mus, kappas, pi):
 
     p_k = p_k/np.sum(p_k, axis = 1, dtype="float64")[:, np.newaxis]
 
-    try:
-        z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
-    except:
-        print(p_k)
-        print("parameters")
-        print(mus)
-        print(kappas)
+    z = np.array(list(map(lambda pv : np.argwhere(np.random.multinomial(1, pv) == 1).ravel()[0], p_k)))
+
     return np.array(z)
  
 def sample_pi(z):
@@ -55,9 +55,7 @@ def sample_pi(z):
         z_counts[k] = np.where(z == k)[0].shape[0]
 
     new_alpha = alpha + z_counts
-    if DEBUG:
-        print("sampling pi ...")
-        print("new alpha: " + str(new_alpha))
+    
     return np.random.dirichlet(new_alpha)
 
 
@@ -104,29 +102,26 @@ def show(itern, x, z, mus, kappas):
     images.append(imageio.imread("figures/iter_"+  str(itern) + ".png"))
 
 
-def log_likelihood(x, mus, Vs, z):
+def log_likelihood(x, mus, kappas, z):
     likelihood = 0.0
-    for i in range(len(x)):
-        k = z[i]
-        likelihood += math.log(norm.pdf(x[i], mus[k], Vs[k]))
+    for k in range(K):
+        x_k = x[z == k]
+        likelihood += np.sum(ds.vMFlogpdf(x_k, mus[k], kappas[k]))
     return likelihood
 
-iter_likelihoods = []
-ilmeans = []
-def check_stop(x, sampled_mus, sampled_Vs, z):
-        iter_likelihoods.append(log_likelihood(x, sampled_mus, sampled_Vs, z))
-        ilmeans.append(np.mean(iter_likelihoods[-M:]))
-        return len(ilmeans) > 2 and abs(ilmeans[-2] - ilmeans[-1]) < 0.1 
-    
+   
 
 
 
-def gibbs_sampler(x, niter=100):
+def vmf_gibbs_sampler(x, gt=[], niter=100):
     pi, mus, kappas, z = init(x)
     
     sampled_mus = np.zeros((niter, K, P))
     sampled_kappas = np.zeros((niter, K))
     sampled_pis = np.zeros((niter, K))
+    loglikelihood = np.zeros((niter,))
+    ARI = np.zeros((niter,))
+    AMI = np.zeros((niter,))
     
     sampled_mus[0] = np.array(mus)
     sampled_kappas[0] = kappas
@@ -142,102 +137,85 @@ def gibbs_sampler(x, niter=100):
         sampled_mus[n] = sample_mu(sampled_kappas[n - 1], z, x )
         sampled_kappas[n] = sample_kappa(sampled_mus[n], z, x , sampled_kappas[n - 1])
         
-       # if PLOT: show(n, x, z, sampled_mus[n], sampled_kappas[n])
+        loglikelihood[n] = log_likelihood(x, sampled_mus[n], sampled_kappas[n], z)
+        if gt != []:
+            ARI[n] = adjusted_rand_score(gt, z)
+            AMI[n] = adjusted_mutual_info_score(gt, z)
+        
 
 
-    print("")
-    print("True parameters")
-    print("Mus : " + str(np.array(original_mus)))
-    print("kappas : " + str(np.array(original_kappas)))
-    print("final samples")
-    print("final Mus : " + str(np.array(sampled_mus[-1])))
-    print("final kappas : " + str(sampled_kappas[-1]))
-    print("final pis: " + str(sampled_pis[-1]))
+
+    return z, loglikelihood, ARI, AMI
     
 
-    print("ESTIMATES : ")
-    avgmus = np.zeros((K, P))
-    for k in range(K):
-        avgmus[k] = np.mean(sampled_mus[-100:, k, :], axis=0)
-    print("prior mu " + str(mu0))
-    print("avg mu" + str(avgmus))
-    print("avg kappa" +  str(np.mean(sampled_kappas[-100:], axis=0)))
-    it = np.arange(niter)
-    for k in range(K):
-        plt.plot(it, sampled_kappas[:, k])
-    plt.show()
 
-
-
-
-
-
-
-## interface
-
-
-#Flags
-try:
-    P = int(sys.argv[1]) 
-except:
-    print("Usage multivariate_gibbs_sampler.py Dimensions [...]")
-    sys.exit(0)
-
-MARGINALS = False
-
-DEBUG = "-d" in sys.argv
-EARLYSTOP = "--earlystop" in sys.argv
-PLOT =  "--no-plot" not in sys.argv
-
-if "-maxiter" in sys.argv:
-    niter = int(sys.argv[sys.argv.index("-maxiter") + 1]) 
-else:
-    niter=1000
-
-
-
-if "-s" in sys.argv:
-
-    K = int(sys.argv[sys.argv.index("-s") + 1]) 
-    N = int(sys.argv[sys.argv.index("-s") + 2]) 
+def synth_data(original_pi, N, p):
+    global K, P, mu0, alpha
+    K = len(original_pi)
+    P = p
     #generate synthetic dataset
-    components = []
     original_mus = []
     original_kappas = []
-    for i in range(K):
+    x = np.zeros((N,P))
+    y = np.zeros((N,))
+
+    for k in range(K):
         m = np.random.multivariate_normal([0] * P, np.identity(P), size=2)
         mean = m[0]/norm(m[0])
         concentration = np.random.random() * 30
-
-        components.append(ds.rvMF(N, mean, concentration))     
         original_mus.append(mean)
-        original_kappas.append(np.array(concentration))
+        original_kappas.append(concentration)
+    for i in range(N):
+        z = np.argwhere(np.random.multinomial(1, original_pi) == 1).ravel()[0]
+        x[i] = ds.rvMF(1, original_mus[z], original_kappas[z])[0]
+        y[i] = z
 
-    if PLOT:
-        for c in components:
-            plt.scatter(c[:, 0], c[:, 1], s=np.pi * 3)
-        plt.show()
-    x = np.concatenate(components)
-    
-
-elif "-f" in sys.argv:
-    # read data from file
-    ds = sys.argv[sys.argv.index("-f") + 1]
-    K = int(sys.argv[sys.argv.index("-f") + 2]) 
-    x = np.genfromtxt(ds, delimiter=',')
+    alpha = [2] * K
+    mu0, _ = ds.circ_mean(x)
+    return x, y
 
 
-np.random.shuffle(x)
 
-#Hyper-parameters
-alpha = [2] * K
-mu0, _ = ds.circ_mean(x)
-#kappa0 = ds.concentration(x)
-kappa0 = 0.001
-a = 1
-b = 0.1
+if __name__ == "__main__":
+## interface
 
 
-gibbs_sampler(x, niter=niter)
-if PLOT :
-    imageio.mimsave("convergence_animation.gif", images, duration=0.1)
+    PLOT =  "-plot" in sys.argv
+
+    if "-maxiter" in sys.argv:
+        niter = int(sys.argv[sys.argv.index("-maxiter") + 1]) 
+    else:
+        niter=1000
+
+
+
+       
+    if "-s" in sys.argv:
+        try:
+            p = int(sys.argv[1]) 
+        except:
+            print("Usage vMF_gibbs_sampler.py Dimensions [...]")
+            sys.exit(0)
+
+
+        original_pi = sys.argv[sys.argv.index("-s") + 1]
+        print(original_pi)
+        original_pi = [float(e) for e in original_pi.split(",")]
+        N = int(sys.argv[sys.argv.index("-s") + 2])
+        x, y = synth_data(original_pi, N, p)
+    elif "-nlp":
+
+        x, y, K = nlp.get_data(50)
+        P = x.shape[1]
+        alpha = [2] * K
+        mu0, _ = ds.circ_mean(x)
+        print(x.dtype)
+        
+        
+
+    #Hyper-parameters
+    #kappa0 = ds.concentration(x)
+
+    vmf_gibbs_sampler(x, niter=niter)
+    if PLOT :
+        imageio.mimsave("convergence_animation.gif", images, duration=0.1)

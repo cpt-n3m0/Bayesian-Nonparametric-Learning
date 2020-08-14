@@ -168,6 +168,14 @@ if __name__ == "__main__" :
     x = np.arange(0.1, 100, 0.1)
     y = [p(e) for e in x]
     plt.plot(x, y)
+    plt.title("example pdf of the concentration posterior")
+    plt.ylabel("p(kappa|.)")
+    plt.xlabel("kappa")
+    plt.show()
+    plt.hist(s)
+    plt.title("Samples generated using Slice sampler")
+    plt.xlabel("Value bins")
+    plt.ylabel("Frequencies")
     plt.show()
 
     

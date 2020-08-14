@@ -7,6 +7,7 @@ from scipy.stats import norm, t
 import math
 import imageio
 from sklearn.cluster import KMeans
+from sklearn.metrics import adjusted_rand_score, adjusted_mutual_info_score
 import sys
 
 np.set_printoptions(precision=2)
@@ -33,7 +34,7 @@ def pxi(x_i, x_k, N_k):
     m_n = (k0 * m0 + N_k * xm)/(k0 + N_k)
     k_n = k0 + N_k
     a_n = a0 + N_k/2
-    b_n = b0 + 0.5 * np.sum((x_k - xm) ** 2 , axis=0) + k0 * N_k * (xm - m0) ** 2 / (2 * (k0 + N_k))
+    b_n = b0 + 0.5 * np.sum((x_k - xm) ** 2 , axis=0) + (k0 * N_k * (xm - m0) ** 2) / (2 * (k0 + N_k))
 
     df = 2 * a_n
     t_scale = (b_n * (1 + k_n))/(a_n * k_n)
@@ -43,19 +44,20 @@ def pxi(x_i, x_k, N_k):
 def collapsed_gibbs_sampler(x, niter=100):
     xlen = x.shape[0]
     z = np.array([np.argwhere(np.random.multinomial(1,[1/K] * K) == 1).ravel()[0] for e in range(xlen)])
+    memberships = [x[np.argwhere(z == k).ravel()] for k in range(K)]
+    
     for n in range(niter):
         print("ITER {}/{}".format(str(n), str(niter)) , end= "\n" if  DEBUG else "\r", flush=not DEBUG )
         for i in range(xlen):
             p_z = np.zeros((K, ))
+            memberships[z[i]] = np.delete(memberships[z[i]], np.where(memberships[z[i]] == x[i])[0])
             for k in range(K):
-                x_k = x[np.argwhere(z == k).ravel()]
-                if x_k.shape[0] > 0:
-                    x_k =  np.delete(x_k, np.unravel_index((x_k == x[i]).argmax(), x_k.shape))
-                N_k = x_k.shape[0] 
-                p_xi = pxi(x[i] , x_k, N_k)
-                p_z[k] = math.exp( math.log((N_k + alpha[k]/K)) + p_xi - math.log((xlen + alpha[k] - 1))  )
+                N_k = memberships[z[i]].shape[0] 
+                p_xi = pxi(x[i] , memberships[z[i]], N_k)
+                p_z[k] = math.exp( math.log((N_k + alpha[k]/K)/ (xlen + alpha[k] - 1)) + p_xi  )
             p_z = p_z/np.sum(p_z)
             z[i] =  np.argwhere(np.random.multinomial(1, p_z) == 1).ravel()[0]
+            memberships[z[i]] = np.append(memberships[z[i]], x[i]) 
         if PLOT: show(n, x, z)
 
     x_ks = [x[np.argwhere(z == k).ravel()] for k in range(K)]
@@ -125,9 +127,9 @@ np.random.shuffle(x)
 #Hyper-parameters
 alpha = [2] * K
 m0 = np.mean(x)
-k0 = 0.01
-a0 = 0.5
-b0 = 0.5
+k0 = 1000
+a0 = 2
+b0 = 2
 
 
 
